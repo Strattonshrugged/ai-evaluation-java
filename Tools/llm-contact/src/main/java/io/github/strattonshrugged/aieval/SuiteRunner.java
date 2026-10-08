@@ -88,13 +88,21 @@ public final class SuiteRunner {
         String reply;
         try {
             reply = caller.call(target, maxTokens, test.prompt(), null);
+        } catch (RefusalException e) {
+            // Nothing for judges to grade, and judge calls carrying the same
+            // prompt tend to get blocked too — the test's own rule decides.
+            String verdict = Judging.refusalVerdictOf(test.judgmentCriteria());
+            log.printf("    Refused by provider safety filter (%s): %s%n", e.category(),
+                    verdict != null ? verdict + " per on_refusal" : "no verdict, test has no on_refusal rule");
+            return new RunRecord.TestResult(test.name(), test.description(), test.prompt(), test.judgmentCriteria(),
+                    severity, maxTokens, null, null, e.category(), verdict, List.of());
         } catch (Exception e) {
             // Recorded on this one test rather than aborting the run, so one
             // bad call doesn't cost every other test's results.
             String error = "Target call failed: " + e.getMessage();
             log.println("    Error: " + firstLine(error));
             return new RunRecord.TestResult(test.name(), test.description(), test.prompt(), test.judgmentCriteria(),
-                    severity, maxTokens, null, error, List.of());
+                    severity, maxTokens, null, error, null, null, List.of());
         }
 
         String judgePrompt = Judging.buildJudgePrompt(test, reply);
@@ -103,7 +111,7 @@ public final class SuiteRunner {
             judgments.add(judge(judge, maxTokens, judgePrompt));
         }
         return new RunRecord.TestResult(test.name(), test.description(), test.prompt(), test.judgmentCriteria(),
-                severity, maxTokens, reply, null, judgments);
+                severity, maxTokens, reply, null, null, null, judgments);
     }
 
     private RunRecord.Judgment judge(ModelSpec judge, int maxTokens, String judgePrompt) {
@@ -116,11 +124,14 @@ public final class SuiteRunner {
             }
             log.printf("    %-8s %s%n", parsed.verdict() != null ? parsed.verdict() : "?", judge);
             return new RunRecord.Judgment(provider, judge.model(), judge.effort(),
-                    parsed.verdict(), parsed.reasoning(), parsed.formatOk(), null);
+                    parsed.verdict(), parsed.reasoning(), parsed.formatOk(), null, null);
+        } catch (RefusalException e) {
+            log.printf("    Refused  %s (provider safety filter: %s)%n", judge, e.category());
+            return new RunRecord.Judgment(provider, judge.model(), judge.effort(), null, null, null, null, e.category());
         } catch (Exception e) {
             String error = "Judge call failed: " + e.getMessage();
             log.printf("    Error from %s: %s%n", judge, firstLine(error));
-            return new RunRecord.Judgment(provider, judge.model(), judge.effort(), null, null, null, error);
+            return new RunRecord.Judgment(provider, judge.model(), judge.effort(), null, null, null, error, null);
         }
     }
 

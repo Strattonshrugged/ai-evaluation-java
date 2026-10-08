@@ -14,7 +14,8 @@ public interface ModelCaller {
      * @param maxTokens per-call output token ceiling
      * @param prompt    single-turn user prompt
      * @param schema    JSON schema to request structured output against, or null for plain text
-     * @throws Exception on any transport/provider failure, or a reply with no usable text
+     * @throws RefusalException when the provider's safety layer blocked the call
+     * @throws Exception on any other transport/provider failure, or a reply with no usable text
      */
     String call(ModelSpec model, int maxTokens, String prompt, ObjectNode schema) throws Exception;
 }

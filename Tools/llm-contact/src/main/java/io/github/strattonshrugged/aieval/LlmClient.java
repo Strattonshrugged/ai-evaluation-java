@@ -10,6 +10,7 @@ import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.time.Duration;
+import java.util.Set;
 
 /**
  * Real HTTP implementation of {@link ModelCaller} for every {@link Provider}.
@@ -67,10 +68,12 @@ public final class LlmClient implements ModelCaller {
         JsonNode response = post(HttpRequest.newBuilder(URI.create(site))
                 .header("x-api-key", apiKey)
                 .header("anthropic-version", "2023-06-01"), body);
+        return anthropicText(response);
+    }
 
+    static String anthropicText(JsonNode response) throws RefusalException {
         if ("refusal".equals(response.path("stop_reason").asText())) {
-            String category = response.path("stop_details").path("category").asText("unspecified");
-            return "[REFUSED by safety classifier - category: " + category + "]";
+            throw new RefusalException(response.path("stop_details").path("category").asText("unspecified"));
         }
         for (JsonNode block : response.path("content")) {
             if ("text".equals(block.path("type").asText())) {
@@ -99,8 +102,19 @@ public final class LlmClient implements ModelCaller {
 
         JsonNode response = post(HttpRequest.newBuilder(URI.create(site))
                 .header("Authorization", "Bearer " + apiKey), body);
+        return openAiCompatibleText(response);
+    }
 
-        String content = response.path("choices").path(0).path("message").path("content").asText("");
+    static String openAiCompatibleText(JsonNode response) throws RefusalException {
+        JsonNode choice = response.path("choices").path(0);
+        if ("content_filter".equals(choice.path("finish_reason").asText())) {
+            throw new RefusalException("content_filter");
+        }
+        // OpenAI reports a structured-output refusal here instead of in content.
+        if (choice.path("message").path("refusal").isTextual()) {
+            throw new RefusalException("refusal");
+        }
+        String content = choice.path("message").path("content").asText("");
         if (content.isEmpty()) {
             throw new IllegalStateException("No text content in response: " + response);
         }
@@ -124,8 +138,24 @@ public final class LlmClient implements ModelCaller {
 
         JsonNode response = post(HttpRequest.newBuilder(URI.create(site + "/" + model.model() + ":generateContent"))
                 .header("x-goog-api-key", apiKey), body);
+        return geminiText(response);
+    }
 
-        String text = response.path("candidates").path(0).path("content").path("parts").path(0).path("text").asText("");
+    /** Gemini finishReasons that mean its safety layer cut the reply off. */
+    private static final Set<String> GEMINI_BLOCK_REASONS = Set.of("SAFETY", "PROHIBITED_CONTENT", "BLOCKLIST", "SPII");
+
+    static String geminiText(JsonNode response) throws RefusalException {
+        // A blocked prompt comes back with no candidates at all, just promptFeedback.
+        JsonNode promptBlock = response.path("promptFeedback").path("blockReason");
+        if (promptBlock.isTextual()) {
+            throw new RefusalException(promptBlock.asText());
+        }
+        JsonNode candidate = response.path("candidates").path(0);
+        String finishReason = candidate.path("finishReason").asText("");
+        if (GEMINI_BLOCK_REASONS.contains(finishReason)) {
+            throw new RefusalException(finishReason);
+        }
+        String text = candidate.path("content").path("parts").path(0).path("text").asText("");
         if (text.isEmpty()) {
             throw new IllegalStateException("No text content in response: " + response);
         }

@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.TextNode;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.function.Executable;
 
 import java.nio.file.Path;
 import java.util.List;
@@ -40,6 +41,52 @@ class ParsingTest {
         JsonNode passOnly = MAPPER.readTree("{\"pass_conditions\":[\"a\"]}");
         assertFalse(Judging.formatCriteria(passOnly).contains("FAILS"));
         assertEquals("Medium", Judging.severityOf(passOnly));
+    }
+
+    @Test
+    void refusalRuleReadsOnlyPassOrFail() throws Exception {
+        assertEquals("pass", Judging.refusalVerdictOf(MAPPER.readTree("{\"on_refusal\":\"pass\"}")));
+        assertEquals("fail", Judging.refusalVerdictOf(MAPPER.readTree("{\"on_refusal\":\"fail\"}")));
+        assertNull(Judging.refusalVerdictOf(MAPPER.readTree("{\"on_refusal\":\"PASS\"}")));
+        assertNull(Judging.refusalVerdictOf(MAPPER.readTree("{\"pass_conditions\":[\"a\"]}")));
+        assertNull(Judging.refusalVerdictOf(TextNode.valueOf("be nice")));
+        assertFalse(Judging.formatCriteria(MAPPER.readTree("{\"pass_conditions\":[\"a\"],\"on_refusal\":\"pass\"}"))
+                .contains("on_refusal"));
+    }
+
+    private static String refusalCategory(Executable call) {
+        return assertThrows(RefusalException.class, call).category();
+    }
+
+    @Test
+    void providerRefusalsAreDetectedFromStructuredFields() throws Exception {
+        assertEquals("bio", refusalCategory(() -> LlmClient.anthropicText(MAPPER.readTree(
+                "{\"stop_reason\":\"refusal\",\"stop_details\":{\"category\":\"bio\"},\"content\":[]}"))));
+        assertEquals("unspecified", refusalCategory(() -> LlmClient.anthropicText(MAPPER.readTree(
+                "{\"stop_reason\":\"refusal\",\"content\":[]}"))));
+        assertEquals("hi", LlmClient.anthropicText(MAPPER.readTree(
+                "{\"stop_reason\":\"end_turn\",\"content\":[{\"type\":\"text\",\"text\":\"hi\"}]}")));
+
+        assertEquals("content_filter", refusalCategory(() -> LlmClient.openAiCompatibleText(MAPPER.readTree(
+                "{\"choices\":[{\"finish_reason\":\"content_filter\",\"message\":{\"content\":\"\"}}]}"))));
+        assertEquals("refusal", refusalCategory(() -> LlmClient.openAiCompatibleText(MAPPER.readTree(
+                "{\"choices\":[{\"finish_reason\":\"stop\",\"message\":{\"content\":null,\"refusal\":\"I can't\"}}]}"))));
+        assertEquals("hi", LlmClient.openAiCompatibleText(MAPPER.readTree(
+                "{\"choices\":[{\"finish_reason\":\"stop\",\"message\":{\"content\":\"hi\",\"refusal\":null}}]}")));
+
+        assertEquals("PROHIBITED_CONTENT", refusalCategory(() -> LlmClient.geminiText(MAPPER.readTree(
+                "{\"promptFeedback\":{\"blockReason\":\"PROHIBITED_CONTENT\"}}"))));
+        assertEquals("SAFETY", refusalCategory(() -> LlmClient.geminiText(MAPPER.readTree(
+                "{\"candidates\":[{\"finishReason\":\"SAFETY\"}]}"))));
+        assertEquals("hi", LlmClient.geminiText(MAPPER.readTree(
+                "{\"candidates\":[{\"finishReason\":\"STOP\",\"content\":{\"parts\":[{\"text\":\"hi\"}]}}]}")));
+    }
+
+    @Test
+    void modelDeclinesInTextAreOrdinaryReplies() throws Exception {
+        // A model saying no in its own words is for the judges, not the refusal path.
+        assertEquals("I can't help with that.", LlmClient.anthropicText(MAPPER.readTree(
+                "{\"stop_reason\":\"end_turn\",\"content\":[{\"type\":\"text\",\"text\":\"I can't help with that.\"}]}")));
     }
 
     @Test

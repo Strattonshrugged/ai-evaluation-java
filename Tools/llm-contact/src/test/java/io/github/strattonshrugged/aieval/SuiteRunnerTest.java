@@ -99,6 +99,61 @@ class SuiteRunnerTest {
         assertEquals(3, judgments.size());
     }
 
+    private static Suite.TestCase withOnRefusal(String name, String onRefusal) throws Exception {
+        String rule = onRefusal == null ? "" : ",\"on_refusal\":\"" + onRefusal + "\"";
+        return new Suite.TestCase(name, "d", "prompt for " + name,
+                MAPPER.readTree("{\"pass_conditions\":[\"a\"]" + rule + "}"), null);
+    }
+
+    @Test
+    void targetRefusalAppliesTheTestsOnRefusalRuleAndSkipsJudging() throws Exception {
+        List<String> judgeCalls = new ArrayList<>();
+        ModelCaller caller = (model, maxTokens, prompt, schema) -> {
+            if (model.equals(TARGET)) throw new RefusalException("bio");
+            judgeCalls.add(prompt);
+            return "{\"verdict\":\"pass\",\"reasoning\":\"r\"}";
+        };
+
+        RunRecord run = new SuiteRunner(caller, 100, quiet()).run("S",
+                suite(withOnRefusal("attack", "pass"), withOnRefusal("benign", "fail"),
+                        withOnRefusal("unsaid", null), withOnRefusal("typo", "maybe")),
+                TARGET, "site", List.of(JUDGE_A));
+
+        assertTrue(judgeCalls.isEmpty());
+        assertEquals(List.of("pass", "fail"),
+                run.tests().subList(0, 2).stream().map(RunRecord.TestResult::refusalVerdict).toList());
+        assertNull(run.tests().get(2).refusalVerdict());
+        assertNull(run.tests().get(3).refusalVerdict());
+        for (RunRecord.TestResult t : run.tests()) {
+            assertEquals("bio", t.refusal());
+            assertNull(t.reply());
+            assertNull(t.error());
+            assertTrue(t.judgments().isEmpty());
+        }
+    }
+
+    @Test
+    void judgeRefusalIsRecordedOnThatJudgmentAndNeverAsAPass() throws Exception {
+        ModelCaller caller = (model, maxTokens, prompt, schema) -> {
+            if (model.equals(TARGET)) return "reply";
+            if (model.equals(JUDGE_A)) throw new RefusalException("general_harms");
+            return "{\"verdict\":\"fail\",\"reasoning\":\"r\"}";
+        };
+
+        RunRecord run = new SuiteRunner(caller, 100, quiet())
+                .run("S", suite(withOnRefusal("t1", "pass")), TARGET, "site", List.of(JUDGE_A, JUDGE_B));
+
+        RunRecord.TestResult t1 = run.tests().get(0);
+        assertNull(t1.refusal());
+        assertNull(t1.refusalVerdict());
+        RunRecord.Judgment refused = t1.judgments().get(0);
+        assertEquals("general_harms", refused.refusal());
+        assertNull(refused.verdict());
+        assertNull(refused.judgeFormatOk());
+        assertNull(refused.error());
+        assertEquals("fail", t1.judgments().get(1).verdict());
+    }
+
     @Test
     void judgeResolutionPrefersSuiteDeclaredThenSelectedThenSelf() {
         Suite declares = new Suite("x", null, "gemini", null, "high", List.of());

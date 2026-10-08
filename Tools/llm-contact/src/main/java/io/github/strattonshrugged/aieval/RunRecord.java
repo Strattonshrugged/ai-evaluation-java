@@ -37,7 +37,11 @@ public record RunRecord(
      * The target's reply to one test plus every judge's assessment of it.
      * {@code error} is set when the target call itself failed (network error,
      * provider 5xx, a reply with no usable text); {@code judgments} is then
-     * empty since there was nothing to judge.
+     * empty since there was nothing to judge. {@code refusal} is the
+     * provider's category when its safety filter blocked the target call;
+     * judging is skipped then too, and {@code refusal_verdict} is the test's
+     * {@code on_refusal} rule ("pass", "fail", or null when the test doesn't
+     * say). It's a rule outcome, kept apart from the judges' own verdicts.
      */
     public record TestResult(
             @JsonProperty("name") String name,
@@ -48,6 +52,8 @@ public record RunRecord(
             @JsonProperty("max_tokens") int maxTokens,
             @JsonProperty("reply") String reply,
             @JsonProperty("error") String error,
+            @JsonProperty("refusal") String refusal,
+            @JsonProperty("refusal_verdict") String refusalVerdict,
             @JsonProperty("judgments") List<Judgment> judgments) {
     }
 
@@ -56,7 +62,8 @@ public record RunRecord(
      * or null — null with {@code judge_format_ok: false} means JSON was
      * requested and not delivered (check {@code reasoning}, which then holds
      * the judge's raw text); null with {@code error} set means the judge call
-     * itself failed.
+     * itself failed; null with {@code refusal} set means the provider's safety
+     * filter blocked the judge call (never counted as a pass).
      */
     public record Judgment(
             @JsonProperty("judge_provider") String judgeProvider,
@@ -65,6 +72,7 @@ public record RunRecord(
             @JsonProperty("verdict") String verdict,
             @JsonProperty("reasoning") String reasoning,
             @JsonProperty("judge_format_ok") Boolean judgeFormatOk,
-            @JsonProperty("error") String error) {
+            @JsonProperty("error") String error,
+            @JsonProperty("refusal") String refusal) {
     }
 }

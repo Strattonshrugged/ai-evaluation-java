@@ -27,10 +27,21 @@ Failures are recorded rather than allowed to sink the run:
 - If the **target** call fails (network error, provider error, or a reply with no usable text), the test's `error` is set, it has no judgments, and the run continues.
 - If a single **judge** call fails, only that judgment's `error` is set.
 
+Refusals by a provider's safety filter are recorded separately from errors. They're detected from the API's own structured signal: Anthropic's `stop_reason: "refusal"`, `finish_reason: "content_filter"` or `message.refusal` on OpenAI-style APIs, and Gemini's block and finish reasons. A model declining in its own words is not a refusal here. That's an ordinary reply, and the judges grade it.
+
+- If the **target** is refused, the test's `refusal` holds the provider's category, nothing is sent to the judges, and `refusal_verdict` comes from the test's `on_refusal` rule (see Suites).
+- If a **judge** is refused, that judgment's `refusal` is set and its verdict stays null. A judge refusal never counts as a pass.
+
 ### Suites
 Suites use the same JSON format as AI-Evaluation-Portfolio. Suite-level fields are `suiteID`, `owasp_description`, optional judge fields, and `tests[]`. Each test has `name`, `description`, `prompt` and `judgment_criteria`. The criteria are either a plain string or `{pass_conditions[], fail_conditions[]?, severity_if_fail?}`.
 
 `fail_conditions` are an unconditional veto: if any one of them is met, the test fails no matter which pass conditions were also met. A test can also set its own `max_tokens`, which overrides the default for that test's target and judge calls.
+
+Structured criteria can also set `on_refusal`, which decides what a provider safety-filter refusal of the target counts as:
+
+- `"pass"`: being blocked is an acceptable outcome. I only use this where the whole request should be declined. If a legitimate task is mixed in, like summarizing a review that hides an injection, a block means the real task never got done.
+- `"fail"`: the request should have been answered, so being blocked is the failure.
+- Not set: the refusal is recorded with no verdict, for a human to look at. That's deliberate, so a model that refuses everything can't earn passes nobody granted.
 
 ### Runs
 There's one file per suite × target: `Runs/<suite>_<UTC-timestamp>_<target-model>.json`, with the timestamp in `YYYYMMDDTHHMMSSZ` form. Putting the suite first makes every target's attempt at a suite sort together.
@@ -44,8 +55,10 @@ There's one file per suite × target: `Runs/<suite>_<UTC-timestamp>_<target-mode
   "tests": [{
     "name": "...", "description": "...", "prompt": "...", "judgment_criteria": { ... },
     "severity": "High", "max_tokens": 1024, "reply": "...", "error": null,
+    "refusal": null, "refusal_verdict": null,
     "judgments": [{ "judge_provider": "mistral", "judge_model": "mistral-small-latest", "judge_effort": null,
-                    "verdict": "pass", "reasoning": "...", "judge_format_ok": true, "error": null }, ...]
+                    "verdict": "pass", "reasoning": "...", "judge_format_ok": true, "error": null,
+                    "refusal": null }, ...]
   }]
 }
 ```
@@ -68,6 +81,8 @@ Requires JDK 21. The Gradle wrapper downloads Gradle itself.
 2. Copy `.env.example` to `.env` and fill in keys for the providers you'll use as targets **or** judges.
 3. Build once with `./gradlew installDist`. On Windows, use `gradlew.bat installDist`.
 4. Run `build/install/aieval/bin/aieval gui` for the GUI, or `aieval run` for the command line. On Windows, use `build\install\aieval\bin\aieval.bat gui`.
+
+I recommend adding `Tools/llm-contact/build/install/aieval/bin` to your PATH, so you can just run `aieval gui` or `aieval run` from anywhere inside the repo. The commands below assume you have.
 
 **GUI:** `aieval gui` opens a three-step window:
 
