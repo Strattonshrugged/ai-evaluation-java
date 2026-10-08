@@ -1,0 +1,73 @@
+name: Run Test Suites
+
+on:
+  workflow_dispatch:
+    inputs:
+      suites:
+        description: 'Comma-separated suite ids (Suites/<id>.json, no extension), or "all"'
+        required: true
+      targets:
+        description: 'Comma-separated targets, provider[:model[:effort]] (e.g. anthropic:claude-sonnet-5:max,openai)'
+        required: true
+        default: 'anthropic'
+      judges:
+        description: 'Comma-separated judges, provider[:model[:effort]] (leave blank for each target to judge itself)'
+        required: false
+      max_tokens:
+        description: 'Per-call token ceiling (leave blank for 1024; a test''s own max_tokens still wins)'
+        required: false
+
+permissions:
+  contents: write
+
+jobs:
+  run-suites:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: Tools/llm-contact
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Run suites
+        env:
+          SUITES: ${{ inputs.suites }}
+          TARGETS: ${{ inputs.targets }}
+          JUDGES: ${{ inputs.judges }}
+          MAX_TOKENS: ${{ inputs.max_tokens }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          MISTRAL_API_KEY: ${{ secrets.MISTRAL_API_KEY }}
+          X_API_KEY: ${{ secrets.X_API_KEY }}
+          DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
+        run: |
+          chmod +x gradlew
+          ./gradlew --no-daemon -q installDist
+          build/install/aieval/bin/aieval run --no-prompt --suites "$SUITES" --targets "$TARGETS" --judges "${JUDGES:-self}"
+
+      - name: Commit run results
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add ../../Runs/
+          git diff --cached --quiet || git commit -m "Run results: ${{ inputs.suites }} on ${{ inputs.targets }} (run ${{ github.run_id }})"
+          git push
+
+      - name: Upload run results as artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: runs-${{ github.run_id }}
+          path: Runs/
+          retention-days: 30

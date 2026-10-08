@@ -1,0 +1,7 @@
+.env
+CLAUDE.md
+Tools/llm-contact/build/
+Tools/llm-contact/.gradle/
+.idea/
+*.iml
+.vscode/
